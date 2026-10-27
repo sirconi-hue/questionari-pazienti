@@ -20,8 +20,8 @@
 
   async function rpc(funzione, dati) {
     const r = await fetch(`${C.supabaseUrl}/rest/v1/rpc/${funzione}`, {
-      method: "POST", headers: { apikey: C.chiavePubblica, Authorization: `Bearer ${C.chiavePubblica}`,
-                                  "Content-Type": "application/json" }, body: JSON.stringify(dati) });
+      // la chiave pubblicabile (sb_publishable_…) va solo nell'intestazione apikey, non come «Authorization: Bearer»
+      method: "POST", headers: { apikey: C.chiavePubblica, "Content-Type": "application/json" }, body: JSON.stringify(dati) });
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }
