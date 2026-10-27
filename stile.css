@@ -1,0 +1,28 @@
+:root { --accento: #0f6e6e; --testo: #1f2a30; --tenue: #6b7a80; --bordo: #d9e0e3; --fondo: #f5f7f8; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #fff; color: var(--testo); font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
+header { border-bottom: 2px solid var(--accento); padding-bottom: 10px; margin-bottom: 16px; }
+header .studio { color: var(--tenue); font-size: .9rem; min-height: 1em; }
+h1 { font-size: 1.35rem; margin: 4px 0; }
+.istruzioni { background: var(--fondo); border-radius: 10px; padding: 12px 14px; }
+h2.sezione { font-size: 1.05rem; color: var(--accento); margin: 28px 0 4px; }
+fieldset { border: 1px solid var(--bordo); border-radius: 12px; padding: 14px 14px 12px; margin: 14px 0; }
+fieldset.manca { border-color: #b3261e; background: #fdf3f2; }
+legend { float: left; width: 100%; font-weight: 600; padding: 0; margin-bottom: 4px; }
+legend + * { clear: both; }
+.numero { color: var(--accento); margin-right: 4px; }
+.scala { display: grid; grid-template-columns: repeat(11, 1fr); gap: 4px; margin-top: 10px; }
+.scala label { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: .8rem; }
+.scala input { width: 26px; height: 26px; margin: 0; accent-color: var(--accento); }
+.estremi { display: flex; justify-content: space-between; gap: 12px; font-size: .85rem; color: var(--tenue); margin-top: 6px; }
+.scelte label { display: flex; gap: 10px; align-items: flex-start; padding: 9px 4px; border-bottom: 1px solid var(--fondo); }
+.scelte label:last-child { border-bottom: 0; }
+.scelte input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; accent-color: var(--accento); }
+.gruppo { font-weight: 600; margin: 12px 0 2px; font-size: .95rem; }
+.errore { background: #fbe7e5; color: #8c1d18; border-radius: 10px; padding: 12px 14px; }
+button { width: 100%; padding: 15px; font: inherit; font-weight: 600; background: var(--accento); color: #fff; border: 0; border-radius: 12px; margin-top: 18px; }
+button:disabled { opacity: .6; }
+.fine { text-align: center; padding: 50px 10px; }
+.tenue { color: var(--tenue); font-size: .9rem; }
+@media (max-width: 480px) { .scala { grid-template-columns: repeat(6, 1fr); row-gap: 10px; } }
