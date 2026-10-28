@@ -7,7 +7,9 @@
   "use strict";
   const C = window.CONFIG_QUESTIONARI;
   const contenuto = document.getElementById("contenuto");
-  const codice = decodeURIComponent((location.hash || "").slice(1));
+  // link: …/anamnesi.html#<codice dello studio> (prima visita) oppure #<codice>/idoneita (idoneità non agonistica)
+  const [codice, tipoLink] = decodeURIComponent((location.hash || "").slice(1)).split("/");
+  const IDONEITA = tipoLink === "idoneita";
 
   function el(tag, attributi, ...figli) {
     const e = document.createElement(tag);
@@ -321,24 +323,15 @@
   }
 
   // ------------------------------------------------------------------ passi
-  function passi(def, dati) {
-    const opz = k => def[k];
-    const trauma = el("div", { hidden: true }, domanda("C'è stato un contatto o un urto (con una persona, un oggetto, il terreno)?",
-      scelta("contatto", opz("si_no_nonso"), { riga: true })));
-    const sport = el("div", { hidden: true }, testo("sport", "Quale sport?", { max: 120 }),
-      domanda("A che livello?", scelta("livello", opz("livelli"), { riga: true })),
-      testo("squadra", "Squadra o società (se ne fai parte)", { max: 120 }));
-    const gravidanza = el("div", { hidden: true }, domanda("Sei in gravidanza?", scelta("gravidanza", opz("gravidanza"), { riga: true })));
-    const allergie = el("div", { hidden: true }, testo("allergie", "Quali allergie?", { aiuto: "farmaci, lattice, alimenti…" }));
-    const referti = sezioneReferti(def);
-    return [
-      { titolo: "Chi sei", corpo: [
+  function chiSei(dati, extra, dopo) {
+    return { titolo: "Chi sei", corpo: [
         el("p", { class: "istruzioni", testo: "Rispondi con calma: servono pochi minuti e in visita avremo più tempo per te. Le domande senza risposta si possono saltare." }),
         testo("cf", "Codice fiscale *", { max: 16, extra: { autocapitalize: "characters", autocomplete: "off", spellcheck: "false" } }),
         testo("nome", "Nome *", { max: 80, extra: { autocomplete: "given-name" } }),
         testo("cognome", "Cognome *", { max: 80, extra: { autocomplete: "family-name" } }),
         testo("telefono", "Telefono", { tipo: "tel", max: 30, extra: { autocomplete: "tel" } }),
         testo("email", "Email", { tipo: "email", max: 120, extra: { autocomplete: "email" } }),
+        extra,
         el("details", { class: "informativa" }, el("summary", { testo: "Informativa sul trattamento dei dati" }),
           el("p", { testo: `Titolare del trattamento: ${dati.studio || "lo studio medico"}. Le informazioni, anche sulla salute, servono a preparare la visita e a compilare la cartella clinica (art. 9, par. 2, lett. h, Regolamento UE 2016/679). Sono cifrate su questo telefono e può leggerle solo lo studio; l'archivio esterno che le trasmette (in Unione europea) conserva solo dati illeggibili e li cancella appena lo studio li riceve. Puoi chiedere allo studio di consultare, correggere o cancellare i tuoi dati.` })),
         el("label", { class: "consenso" }, el("input", { type: "checkbox", name: "consenso", onchange: ev => { R.consenso = ev.target.checked; } }),
@@ -353,8 +346,22 @@
         }
         if (R.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(R.email)) return ["email", "L'indirizzo email non è valido."];
         if (!R.consenso) return ["consenso", "Per continuare conferma di aver letto l'informativa."];
-        gravidanza.hidden = !femmina(R.cf);
-      } },
+        if (dopo) return dopo();
+      } };
+  }
+
+  function passi(def, dati) {
+    const opz = k => def[k];
+    const trauma = el("div", { hidden: true }, domanda("C'è stato un contatto o un urto (con una persona, un oggetto, il terreno)?",
+      scelta("contatto", opz("si_no_nonso"), { riga: true })));
+    const sport = el("div", { hidden: true }, testo("sport", "Quale sport?", { max: 120 }),
+      domanda("A che livello?", scelta("livello", opz("livelli"), { riga: true })),
+      testo("squadra", "Squadra o società (se ne fai parte)", { max: 120 }));
+    const gravidanza = el("div", { hidden: true }, domanda("Sei in gravidanza?", scelta("gravidanza", opz("gravidanza"), { riga: true })));
+    const allergie = el("div", { hidden: true }, testo("allergie", "Quali allergie?", { aiuto: "farmaci, lattice, alimenti…" }));
+    const referti = sezioneReferti(def);
+    return [
+      chiSei(dati, [], () => { gravidanza.hidden = !femmina(R.cf); }),
       { titolo: "Il problema", corpo: [
         testo("motivo", "Perché vieni in visita? Raccontalo con parole tue", { righe: 3, max: 2000 }),
         sezioneMappa(def),
@@ -413,6 +420,91 @@
     ];
   }
 
+  // ------------------------------------------------------------------ idoneità non agonistica
+  // Domande di anamnesi personale e familiare per lo screening cardiovascolare (14 punti AHA/ACC:
+  // Maron B.J. et al., J Am Coll Cardiol 2014;64:1479-1514), più le informazioni che servono al certificato.
+  function nessunoDi(nome, voci, titolo) {
+    const casella = el("input", { type: "checkbox", name: "nessun_" + nome, onchange: ev => {
+      R["nessun_" + nome] = ev.target.checked;
+      if (ev.target.checked) { document.querySelectorAll(`input[name="${nome}"]`).forEach(i => { i.checked = false; }); R[nome] = []; }
+    } });
+    return el("fieldset", { "data-id": nome, class: "allarme" }, el("legend", { testo: titolo + " *" }),
+      scelta(nome, voci, { multipla: true, poi: () => { if ((R[nome] || []).length) { casella.checked = false; R["nessun_" + nome] = false; } } }),
+      el("div", { class: "scelte" }, el("label", {}, casella, el("strong", { testo: "Nessuno di questi" }))));
+  }
+  function caricaEcg() {
+    R.referti = [];
+    const elenco = el("ul", { class: "referti" }), avviso = el("p", { class: "errore", hidden: true });
+    const input = el("input", { type: "file", accept: "image/*,application/pdf", multiple: true, class: "nascosto", onchange: async ev => {
+      avviso.hidden = true;
+      for (const f of ev.target.files) {
+        if (R.referti.length >= MAX_REFERTI) break;
+        try { R.referti.push(Object.assign(await preparaReferto(f), { esame: "ecg" })); }
+        catch (e) { avviso.textContent = e.message; avviso.hidden = false; }
+      }
+      ev.target.value = ""; aggiorna();
+    } });
+    function aggiorna() {
+      elenco.replaceChildren(...R.referti.map((r, i) => el("li", {},
+        r.mime.startsWith("image/") ? el("img", { src: URL.createObjectURL(r.blob), alt: "" }) : el("span", { class: "pdf", testo: "PDF" }),
+        el("div", { class: "nome", testo: r.nome }),
+        el("button", { type: "button", class: "piccolo", "aria-label": "Togli", testo: "✕", onclick: () => { R.referti.splice(i, 1); aggiorna(); } }))));
+    }
+    return el("div", { class: "referti-box" }, el("label", { class: "pulsante-file" }, input, "📷 Fotografa o carica il referto dell'ECG"), avviso, elenco);
+  }
+  function passiIdoneita(def, dati) {
+    const I = def.idoneita;
+    const gravidanza = el("div", { hidden: true }, domanda("Sei in gravidanza?", scelta("gravidanza", def.gravidanza, { riga: true })));
+    const allergie = el("div", { hidden: true }, testo("allergie", "Quali allergie?", { aiuto: "farmaci, lattice, alimenti…" }));
+    const ecg = el("div", { hidden: true }, testo("ecg_data", "Data dell'ultimo elettrocardiogramma (anche approssimativa)", { tipo: "date", extra: { max: new Date().toISOString().slice(0, 10) } }), caricaEcg());
+    return [
+      chiSei(dati, [
+        testo("luogo_nascita", "Luogo di nascita", { max: 80, aiuto: "serve per il certificato" }),
+        testo("comune", "Comune di residenza", { max: 80 }), testo("indirizzo", "Indirizzo", { max: 120 }),
+      ], () => { gravidanza.hidden = !femmina(R.cf); }),
+      { titolo: "Lo sport", corpo: [
+        el("p", { class: "istruzioni", testo: "Queste domande servono al medico per la visita di idoneità all'attività sportiva non agonistica." }),
+        testo("sport", "Quale sport o attività vuoi praticare? *", { max: 120 }),
+        testo("ore", "Quante ore a settimana, circa?", { tipo: "number", extra: { inputmode: "numeric", min: 0, max: 60 } }),
+        el("div", { class: "due" }, testo("altezza", "Altezza (cm)", { tipo: "number", extra: { inputmode: "numeric", min: 50, max: 250 } }),
+          testo("peso", "Peso (kg)", { tipo: "number", extra: { inputmode: "numeric", min: 2, max: 400 } })),
+      ], controlla: () => { if (!(R.sport || "").trim()) return ["sport", "Indica lo sport o l'attività."]; } },
+      { titolo: "Il tuo cuore", corpo: [
+        nessunoDi("personale", I.personale, "Ti è mai capitato o ti hanno mai detto…"),
+      ], controlla: () => { if (!(R.personale || []).length && !R.nessun_personale) return ["personale", "Rispondi alla domanda (anche «Nessuno di questi»)."]; } },
+      { titolo: "La tua famiglia", corpo: [
+        nessunoDi("familiare", I.familiare, "Nei tuoi familiari (genitori, fratelli, nonni, zii, cugini)…"),
+        testo("familiare_note", "Chi e che cosa, se lo sai", { righe: 2 }),
+      ], controlla: () => { if (!(R.familiare || []).length && !R.nessun_familiare) return ["familiare", "Rispondi alla domanda (anche «Nessuno di questi»)."]; } },
+      { titolo: "La tua salute", corpo: [
+        domanda("Hai o hai avuto…", scelta("altre", I.altre, { multipla: true }), testo("altre_note", "Altre malattie")),
+        testo("interventi", "Interventi chirurgici (quali e quando)", { righe: 2 }),
+        testo("farmaci", "Farmaci che prendi abitualmente", { righe: 2 }),
+        domanda("Hai allergie?", scelta("allergie_presenti", def.si_no_nonso, { riga: true, poi: () => { allergie.hidden = R.allergie_presenti !== "si"; } })),
+        allergie, gravidanza,
+        domanda("Fumi?", scelta("fumo", def.fumo, { riga: true })),
+        domanda("Hai già fatto un elettrocardiogramma (ECG)?", scelta("ecg_fatto", def.si_no_nonso, { riga: true, poi: () => { ecg.hidden = R.ecg_fatto !== "si"; } })),
+        ecg,
+        el("p", { class: "tenue", testo: "Porta in visita gli esami del cuore già fatti (ECG, ecocardiogramma, Holter, prova da sforzo)." }),
+      ] },
+    ];
+  }
+  function risposteIdoneita() {
+    const n = v => (v === undefined || v === "" ? null : Number(v));
+    return {
+      v: 1, tipo: "idoneita",
+      paziente: { cf: R.cf, nome: (R.nome || "").trim(), cognome: (R.cognome || "").trim(), telefono: R.telefono || "", email: R.email || "",
+                  luogo_nascita: R.luogo_nascita || "", comune: R.comune || "", indirizzo: R.indirizzo || "" },
+      sport: R.sport || "", ore: n(R.ore), altezza: n(R.altezza), peso: n(R.peso),
+      personale: R.personale || [], familiare: R.familiare || [], familiare_note: R.familiare_note || "",
+      altre: R.altre || [], altre_note: R.altre_note || "", interventi: R.interventi || "", farmaci: R.farmaci || "",
+      allergie_presenti: R.allergie_presenti || "", allergie: R.allergie_presenti === "si" ? (R.allergie || "") : "",
+      gravidanza: R.gravidanza || "", fumo: R.fumo || "", ecg_fatto: R.ecg_fatto || "",
+      ecg_data: R.ecg_fatto === "si" ? (R.ecg_data || "") : "",
+      gruppo: R.gruppo || "", referti: R.ecg_fatto === "si" ? R.referti.map((r, i) => ({ indice: i, nome: r.nome, mime: r.mime, esame: "ecg" })) : [],
+    };
+  }
+
   function risposte() {
     const n = v => (v === undefined || v === "" ? null : Number(v));
     return {
@@ -437,7 +529,7 @@
 
   function modulo(dati) {
     document.getElementById("studio").textContent = dati.studio || "";
-    const elenco = passi(dati.definizione, dati);
+    const elenco = IDONEITA ? passiIdoneita(dati.definizione, dati) : passi(dati.definizione, dati);
     const avanzamento = el("div", { class: "avanzamento" }, el("span"));
     const errore = el("p", { class: "errore", hidden: true });
     const sezioni = elenco.map(p => el("section", { class: "passo", hidden: true }, el("h2", { class: "sezione", testo: p.titolo }), p.corpo));
@@ -448,7 +540,7 @@
       attuale = i;
       sezioni.forEach((s, j) => { s.hidden = j !== i; });
       avanzamento.firstChild.style.width = `${(i + 1) / elenco.length * 100}%`;
-      document.getElementById("titolo").textContent = `Prima della visita · ${i + 1} di ${elenco.length}`;
+      document.getElementById("titolo").textContent = `${IDONEITA ? "Visita di idoneità" : "Prima della visita"} · ${i + 1} di ${elenco.length}`;
       indietro.hidden = i === 0;
       avanti.textContent = i === elenco.length - 1 ? "Invia allo studio" : "Avanti";
       errore.hidden = true;
@@ -468,7 +560,7 @@
       avanti.disabled = true; avanti.textContent = "Invio…";
       try {
         // prima i referti, uno alla volta, poi il questionario che li elenca
-        const daInviare = (R.esami || []).length ? R.referti : [];
+        const daInviare = IDONEITA ? (R.ecg_fatto === "si" ? R.referti : []) : ((R.esami || []).length ? R.referti : []);
         if (daInviare.length && !R.gruppo) R.gruppo = b64(crypto.getRandomValues(new Uint8Array(24))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
         for (let i = 0; i < daInviare.length; i++) {
           avanti.textContent = `Invio dei referti (${i + 1} di ${daInviare.length})…`;
@@ -476,7 +568,7 @@
           const ok = await rpc("anamnesi_allega", { p_codice: codice, p_gruppo: R.gruppo, p_indice: i, p_cifrato: busta });
           if (ok !== "ok") throw new Error(ok);
         }
-        if ((R.esami || []).length && R.immagini === "carica" && R.dicom.analisi && !R.dicom.completo) {
+        if (!IDONEITA && (R.esami || []).length && R.immagini === "carica" && R.dicom.analisi && !R.dicom.completo) {
           stato.hidden = false;
           await inviaImmagini(dati.chiave, f => {
             stato.textContent = `Invio delle immagini: ${Math.round(f * 100)}% – non chiudere la pagina.`;
@@ -485,7 +577,7 @@
           stato.hidden = true;
         }
         avanti.textContent = "Invio…";
-        const esito = await rpc("anamnesi_invia", { p_codice: codice, p_cifrato: await cifra(dati.chiave, risposte()) });
+        const esito = await rpc("anamnesi_invia", { p_codice: codice, p_cifrato: await cifra(dati.chiave, IDONEITA ? risposteIdoneita() : risposte()) });
         if (esito === "ok") {
           document.getElementById("titolo").textContent = "Grazie!";
           return messaggio("Le risposte sono state inviate allo studio. Puoi chiudere questa pagina: ci vediamo in visita.");
@@ -511,6 +603,7 @@
     try {
       const dati = await rpc("anamnesi_studio", { p_codice: codice });
       if (!dati) return messaggio("Questo QR code non è più attivo: chiedi allo studio quello nuovo.");
+      if (IDONEITA && !dati.definizione.idoneita) return messaggio("Questo questionario non è ancora disponibile: riprova tra qualche minuto.");
       modulo(dati);
     } catch (e) {
       messaggio("Servizio momentaneamente non raggiungibile: riprova tra qualche minuto.", "errore");
