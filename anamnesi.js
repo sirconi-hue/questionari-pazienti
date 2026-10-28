@@ -85,14 +85,160 @@
     const box = el("div", { class: "referti-box", hidden: true },
       el("p", { class: "sottotitolo", testo: "Hai il referto? Fotografalo o caricalo (facoltativo)" }),
       el("label", { class: "pulsante-file" }, input, "📷 Fotografa o scegli i referti"),
-      avviso, elenco,
-      testo("link_immagini", "Link per scaricare le immagini (es. WeTransfer, portale del centro), se ce l'hai", { tipo: "url", max: 500, extra: { inputmode: "url", placeholder: "https://…" } }));
+      avviso, elenco, sezioneImmagini(def));
     box.aggiorna = () => {
       box.hidden = !(R.esami || []).length;
       R.referti.forEach(r => { if (!(R.esami || []).includes(r.esame)) r.esame = (R.esami || [])[0] || ""; });
       aggiorna();
+      if (box.aggiornaImmagini) box.aggiornaImmagini();
     };
+    box.aggiornaImmagini = box.lastChild.aggiorna;
     return box;
+  }
+
+  // ------------------------------------------------------------------ immagini DICOM
+  // Dal computer si sceglie la cartella del CD (si tengono solo i file DICOM, non il programma di visualizzazione)
+  // oppure un file ZIP; i file DICOM scelti si impacchettano in un archivio ZIP. L'archivio viaggia in pezzi da
+  // 16 MiB, ciascuno cifrato con AES-256-CTR e autenticato con HMAC-SHA256; le chiavi sono nel questionario cifrato.
+  const PEZZO = C.pezzoDicom || 16 * 1024 * 1024, MAX_DICOM = 750000000, MAX_VOCI = 65000;
+  const IMG_ESAMI = ["rm", "tac", "rx", "eco"];
+  async function eDicom(f) {
+    if (f.size < 132) return false;
+    const b = new Uint8Array(await f.slice(128, 132).arrayBuffer());
+    return b[0] === 68 && b[1] === 73 && b[2] === 67 && b[3] === 77;   // «DICM»
+  }
+  const eZip = f => /\.zip$/i.test(f.name) || /zip/.test(f.type || "");
+  async function analizza(files) {
+    files = [...files].filter(f => !/(^|\/)(\.|__MACOSX)/.test(f.webkitRelativePath || f.name));
+    const zip = files.filter(eZip);
+    if (zip.length === 1 && files.length === 1) {
+      if (zip[0].size > MAX_DICOM) throw new Error("L'archivio supera 750 MB: manda allo studio un link (es. WeTransfer).");
+      return { zip: zip[0], byte: zip[0].size, file: 0, descrizione: `${zip[0].name} (${mb(zip[0].size)})` };
+    }
+    const voci = [];
+    for (const f of files) {
+      if (voci.length >= MAX_VOCI) break;
+      if (await eDicom(f)) voci.push(f);
+    }
+    if (!voci.length) throw new Error(zip.length ? "Scegli un solo file ZIP." : "Nessuna immagine DICOM trovata: scegli la cartella del CD (di solito «DICOM») o il file ZIP.");
+    const nomi = voci.map((f, i) => new TextEncoder().encode(String(i).padStart(5, "0") + "_" + (f.name || "img").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60)));
+    const byte = voci.reduce((t, f, i) => t + 30 + nomi[i].length + f.size + 46 + nomi[i].length, 22);
+    if (byte > MAX_DICOM) throw new Error("Le immagini superano 750 MB: manda allo studio un link (es. WeTransfer) o porta il CD.");
+    return { voci, nomi, byte, file: voci.length, descrizione: `${voci.length} immagini DICOM (${mb(byte)})` };
+  }
+  const mb = b => b >= 1e6 ? `${Math.round(b / 1e6)} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`;
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u) { let c = 0xFFFFFFFF; for (let i = 0; i < u.length; i++) c = CRC[(c ^ u[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  // archivio ZIP senza compressione (le immagini DICOM si comprimono poco), generato un file alla volta
+  async function* flussoZip(a) {
+    if (a.zip) { for (let o = 0; o < a.zip.size; o += 4194304) yield new Uint8Array(await a.zip.slice(o, o + 4194304).arrayBuffer()); return; }
+    const centrale = []; let posizione = 0;
+    for (let i = 0; i < a.voci.length; i++) {
+      const dati = new Uint8Array(await a.voci[i].arrayBuffer()), nome = a.nomi[i], crc = crc32(dati);
+      const h = new DataView(new ArrayBuffer(30));
+      [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, 0, 2], [12, 33, 2], [14, crc, 4], [18, dati.length, 4],
+       [22, dati.length, 4], [26, nome.length, 2], [28, 0, 2]].forEach(([o, v, n]) => n === 4 ? h.setUint32(o, v, true) : h.setUint16(o, v, true));
+      const c = new DataView(new ArrayBuffer(46));
+      [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, 0, 2], [14, 33, 2], [16, crc, 4], [20, dati.length, 4],
+       [24, dati.length, 4], [28, nome.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, posizione, 4]]
+        .forEach(([o, v, n]) => n === 4 ? c.setUint32(o, v, true) : c.setUint16(o, v, true));
+      centrale.push(new Uint8Array(c.buffer), nome);
+      posizione += 30 + nome.length + dati.length;
+      yield new Uint8Array(h.buffer); yield nome; yield dati;
+    }
+    const dimCentrale = centrale.reduce((t, u) => t + u.length, 0);
+    for (const u of centrale) yield u;
+    const e = new DataView(new ArrayBuffer(22));
+    [[0, 0x06054b50, 4], [4, 0, 2], [6, 0, 2], [8, a.voci.length, 2], [10, a.voci.length, 2], [12, dimCentrale, 4], [16, posizione, 4], [20, 0, 2]]
+      .forEach(([o, v, n]) => n === 4 ? e.setUint32(o, v, true) : e.setUint16(o, v, true));
+    yield new Uint8Array(e.buffer);
+  }
+  async function* aPezzi(sorgente) {
+    let buf = new Uint8Array(PEZZO), pos = 0;
+    for await (const parte of sorgente) {
+      for (let off = 0; off < parte.length;) {
+        const n = Math.min(PEZZO - pos, parte.length - off);
+        buf.set(parte.subarray(off, off + n), pos); pos += n; off += n;
+        if (pos === PEZZO) { yield buf; buf = new Uint8Array(PEZZO); pos = 0; }
+      }
+    }
+    if (pos) yield buf.subarray(0, pos);
+  }
+  async function caricaPezzo(nome, corpo) {
+    for (let tentativo = 0; ; tentativo++) {
+      try {
+        const r = await fetch(`${C.supabaseUrl}/storage/v1/object/anamnesi-dicom/${nome}`, { method: "POST", body: corpo,
+          headers: { apikey: C.chiavePubblica, "Content-Type": "application/octet-stream" } });   // senza x-upsert: mai sovrascrivere
+        if (r.ok) return;
+        const testo = await r.text();
+        if (r.status === 409 || /duplicate|already exists/i.test(testo)) return;   // già caricato in un tentativo precedente
+        if (r.status < 500 || tentativo >= 3) throw new Error("rifiutato " + r.status);
+      } catch (e) {
+        if (tentativo >= 3 || /rifiutato/.test(e.message)) throw e;
+      }
+      await new Promise(ok => setTimeout(ok, 2000 * 2 ** tentativo));
+    }
+  }
+  async function inviaImmagini(chiavePubblica, avanzamento) {
+    const I = R.dicom;
+    if (!I.chiavi) {
+      const casuali = n => crypto.getRandomValues(new Uint8Array(n));
+      I.chiavi = { k: casuali(32), m: casuali(32), nonce: casuali(8) };
+      I.gruppo = b64(casuali(24)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+      I.pezzi = Math.ceil(I.analisi.byte / PEZZO); I.fatti = new Set();
+    }
+    if (!I.prenotato) {
+      const esito = await rpc("anamnesi_prenota", { p_codice: codice, p_gruppo: I.gruppo, p_byte: I.analisi.byte, p_pezzi: I.pezzi });
+      if (esito !== "ok") throw new Error({ spazio: "Lo spazio per le immagini è momentaneamente pieno: indica un link (es. WeTransfer) o porta il CD.",
+        troppo_grande: "Le immagini superano 750 MB: indica un link o porta il CD.", troppi: "Troppi invii in questo momento: riprova tra qualche minuto." }[esito]
+        || "Caricamento delle immagini non accettato.");
+      I.prenotato = true;
+    }
+    const kAes = await crypto.subtle.importKey("raw", I.chiavi.k, { name: "AES-CTR" }, false, ["encrypt"]);
+    const kMac = await crypto.subtle.importKey("raw", I.chiavi.m, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    let n = 0;
+    for await (const pezzo of aPezzi(flussoZip(I.analisi))) {
+      if (!I.fatti.has(n)) {
+        const iv = new Uint8Array(16); iv.set(I.chiavi.nonce); new DataView(iv.buffer).setUint32(8, n);
+        const cifrato = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CTR", counter: iv, length: 32 }, kAes, pezzo));
+        const firmato = new Uint8Array(16 + cifrato.length); firmato.set(iv); firmato.set(cifrato, 16);
+        const tag = new Uint8Array(await crypto.subtle.sign("HMAC", kMac, firmato));
+        await caricaPezzo(`${I.gruppo}/${n}`, new Blob([cifrato, tag], { type: "application/octet-stream" }));
+        I.fatti.add(n);
+      }
+      n++;
+      avanzamento(n / I.pezzi);
+    }
+    I.completo = true;
+  }
+  function sezioneImmagini(def) {
+    R.dicom = {};
+    const nomiEsami = Object.fromEntries(def.esami);
+    const esito = el("p", { class: "tenue" }), avviso = el("p", { class: "errore", hidden: true });
+    const sceltaEsame = el("select", { "aria-label": "Esame delle immagini", onchange: ev => { R.dicom.esame = ev.target.value; } });
+    async function scelti(files) {
+      avviso.hidden = true; esito.textContent = "Controllo dei file…";
+      R.dicom = { esame: R.dicom.esame };
+      try { R.dicom.analisi = await analizza(files); esito.textContent = "✓ " + R.dicom.analisi.descrizione; }
+      catch (e) { esito.textContent = ""; avviso.textContent = e.message; avviso.hidden = false; }
+    }
+    const cartella = el("input", { type: "file", class: "nascosto", webkitdirectory: true, multiple: true, onchange: ev => scelti(ev.target.files) });
+    const singoli = el("input", { type: "file", class: "nascosto", multiple: true, accept: ".zip,.dcm,application/zip,application/dicom,*/*", onchange: ev => scelti(ev.target.files) });
+    const link = el("div", { hidden: true }, testo("link_immagini", "Link per scaricare le immagini", { tipo: "url", max: 500, extra: { inputmode: "url", placeholder: "https://…" } }));
+    const carica = el("div", { hidden: true, class: "carica-immagini" },
+      el("p", { class: "tenue", testo: "Dal computer: inserisci il CD e scegli la cartella (di solito «DICOM»). Dal telefono: scegli il file ZIP ricevuto dal centro. Fino a 750 MB; l'invio può richiedere alcuni minuti." }),
+      el("label", { class: "pulsante-file" }, cartella, "💿 Scegli la cartella del CD"),
+      el("label", { class: "pulsante-file" }, singoli, "🗂 Scegli file ZIP o DICOM"),
+      esito, avviso, el("label", { class: "campo" }, el("span", { testo: "Di quale esame sono le immagini?" }), sceltaEsame));
+    const contenitore = el("div", { class: "immagini" },
+      domanda("Hai anche le immagini (RM, TAC, radiografie)?", scelta("immagini", def.immagini || [["link", "Ho un link per scaricarle"], ["carica", "Le carico adesso"], ["cd", "Le porto in visita su CD"], ["no", "Non ho le immagini"]], { poi: () => contenitore.aggiorna() })), link, carica);
+    contenitore.aggiorna = () => {
+      link.hidden = R.immagini !== "link"; carica.hidden = R.immagini !== "carica";
+      const esami = (R.esami || []).filter(k => k !== "sangue");
+      if (!esami.includes(R.dicom.esame)) R.dicom.esame = IMG_ESAMI.find(k => esami.includes(k)) || esami[0] || "";
+      sceltaEsame.replaceChildren(...esami.map(k => el("option", { value: k, selected: R.dicom.esame === k, testo: nomiEsami[k] })));
+    };
+    return contenitore;
   }
 
   // ------------------------------------------------------------------ codice fiscale
@@ -246,7 +392,9 @@
         testo("obiettivo", "Che cosa ti aspetti dalla visita? (es. tornare a correre, dormire senza dolore)", { righe: 2 }),
       ], controlla: () => {
         R.link_immagini = (R.link_immagini || "").trim();
-        if (R.link_immagini && !/^https:\/\/[^\s]+\.[^\s]+$/.test(R.link_immagini)) return ["link_immagini", "Il link deve iniziare con https:// (copialo per intero dal messaggio ricevuto)."];
+        if (!(R.esami || []).length) return;
+        if (R.immagini === "link" && !/^https:\/\/[^\s]+\.[^\s]+$/.test(R.link_immagini)) return ["link_immagini", "Il link deve iniziare con https:// (copialo per intero dal messaggio ricevuto)."];
+        if (R.immagini === "carica" && !R.dicom.analisi) return ["immagini", "Scegli la cartella del CD o il file ZIP con le immagini (oppure un'altra risposta)."];
       } },
       { titolo: "La tua salute", corpo: [
         domanda("Hai o hai avuto…", scelta("patologie", opz("patologie"), { multipla: true }), testo("patologie_altro", "Altre malattie")),
@@ -275,7 +423,10 @@
       sport: R.sport || "", squadra: R.squadra || "", livello: R.livello || "",
       dolore_riposo: n(R.dolore_riposo), dolore_attivita: n(R.dolore_attivita), dolore_peggiore: n(R.dolore_peggiore),
       dolore_notturno: R.dolore_notturno || "", andamento: R.andamento || "", sintomi: R.sintomi || [], allarme: R.allarme || [],
-      esami: R.esami || [], esami_note: R.esami_note || "", link_immagini: R.esami && R.esami.length ? (R.link_immagini || "") : "",
+      esami: R.esami || [], esami_note: R.esami_note || "", link_immagini: (R.esami || []).length && R.immagini === "link" ? (R.link_immagini || "") : "",
+      immagini: (R.esami || []).length ? (R.immagini || "") : "",
+      dicom: R.dicom && R.dicom.completo ? { gruppo: R.dicom.gruppo, k: b64(R.dicom.chiavi.k), m: b64(R.dicom.chiavi.m), nonce: b64(R.dicom.chiavi.nonce),
+        byte: R.dicom.analisi.byte, pezzo: PEZZO, pezzi: R.dicom.pezzi, file: R.dicom.analisi.file, esame: R.dicom.esame } : null,
       gruppo: R.gruppo || "", referti: (R.esami || []).length ? R.referti.map((r, i) => ({ indice: i, nome: r.nome, mime: r.mime, esame: r.esame })) : [], trattamenti: R.trattamenti || "", obiettivo: R.obiettivo || "",
       patologie: R.patologie || [], patologie_altro: R.patologie_altro || "", interventi: R.interventi || "",
       farmaci: R.farmaci || "", anticoagulanti: R.anticoagulanti || "", allergie: R.allergie_presenti === "si" ? (R.allergie || "") : "",
@@ -325,6 +476,14 @@
           const ok = await rpc("anamnesi_allega", { p_codice: codice, p_gruppo: R.gruppo, p_indice: i, p_cifrato: busta });
           if (ok !== "ok") throw new Error(ok);
         }
+        if ((R.esami || []).length && R.immagini === "carica" && R.dicom.analisi && !R.dicom.completo) {
+          stato.hidden = false;
+          await inviaImmagini(dati.chiave, f => {
+            stato.textContent = `Invio delle immagini: ${Math.round(f * 100)}% – non chiudere la pagina.`;
+            avanti.textContent = `Immagini ${Math.round(f * 100)}%…`;
+          });
+          stato.hidden = true;
+        }
         avanti.textContent = "Invio…";
         const esito = await rpc("anamnesi_invia", { p_codice: codice, p_cifrato: await cifra(dati.chiave, risposte()) });
         if (esito === "ok") {
@@ -334,11 +493,14 @@
         errore.textContent = esito === "troppi" ? "In questo momento lo studio riceve troppi questionari: riprova tra qualche minuto."
                                                 : "Il questionario non è più attivo: chiedi allo studio il nuovo QR code.";
       } catch (e) {
-        errore.textContent = "Invio non riuscito: controlla la connessione e riprova. Le risposte restano qui.";
+        stato.hidden = true;
+        errore.textContent = /^(Lo spazio|Le immagini|Troppi|Caricamento)/.test(e.message) ? e.message
+          : "Invio non riuscito: controlla la connessione e riprova. Le risposte restano qui" + (R.dicom && R.dicom.fatti && R.dicom.fatti.size ? " e l'invio delle immagini riprende da dove si è fermato." : ".");
       }
       errore.hidden = false; avanti.disabled = false; avanti.textContent = "Invia allo studio";
     });
-    contenuto.replaceChildren(avanzamento, ...sezioni, errore, el("div", { class: "pulsanti" }, indietro, avanti),
+    const stato = el("p", { class: "stato-invio", hidden: true });
+    contenuto.replaceChildren(avanzamento, ...sezioni, errore, stato, el("div", { class: "pulsanti" }, indietro, avanti),
       el("p", { class: "tenue", testo: "Le risposte vengono cifrate sul tuo telefono e può leggerle solo lo studio." }));
     mostra(0);
   }

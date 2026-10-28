@@ -31,7 +31,7 @@ button:disabled { opacity: .6; }
 .avanzamento span { display: block; height: 100%; width: 0; background: var(--accento); transition: width .25s; }
 label.campo { display: block; margin: 14px 0; font-weight: 600; }
 label.campo small { display: block; font-weight: 400; }
-label.campo input, label.campo textarea, .zone-scelte select { display: block; width: 100%; margin-top: 4px; padding: 11px 12px; font: inherit;
+label.campo input, label.campo textarea, label.campo select, .zone-scelte select { display: block; width: 100%; margin-top: 4px; padding: 11px 12px; font: inherit;
   font-weight: 400; border: 1px solid var(--bordo); border-radius: 10px; background: #fff; color: var(--testo); }
 label.campo input:focus, label.campo textarea:focus { outline: 2px solid var(--accento); outline-offset: -1px; }
 .scelte.in-riga { display: flex; flex-wrap: wrap; gap: 4px 18px; }
@@ -76,3 +76,6 @@ button.piccolo { width: auto; margin: 0; padding: 4px 10px; background: var(--fo
 .referti .pdf { display: grid; place-items: center; font-weight: 700; color: #b3261e; font-size: .8rem; }
 .referti .nome { font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52vw; }
 .referti select { margin-top: 4px; padding: 5px 8px; font: inherit; font-size: .9rem; border: 1px solid var(--bordo); border-radius: 8px; background: #fff; }
+.immagini { margin-top: 12px; }
+.carica-immagini .pulsante-file { margin: 8px 0; }
+.stato-invio { background: var(--fondo); border-radius: 10px; padding: 12px 14px; font-weight: 600; color: var(--accento); }
