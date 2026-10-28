@@ -66,3 +66,13 @@ button.piccolo { width: auto; margin: 0; padding: 4px 10px; background: var(--fo
 .zone-scelte select { display: inline-block; width: auto; margin: 0 6px; padding: 6px 8px; }
 /* la scala NRS resta su una riga anche sul telefono, come la scala originale */
 @media (max-width: 480px) { .scala.nrs { grid-template-columns: repeat(11, 1fr); gap: 0; } .scala.nrs input { width: 22px; height: 22px; } }
+.referti-box { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--fondo); }
+.sottotitolo { font-weight: 600; margin: 4px 0 8px; }
+.nascosto { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.pulsante-file { display: block; text-align: center; padding: 13px; border: 1.5px dashed var(--accento); border-radius: 12px; color: var(--accento); font-weight: 600; cursor: pointer; }
+.referti { list-style: none; margin: 10px 0 0; padding: 0; }
+.referti li { display: grid; grid-template-columns: 56px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--fondo); }
+.referti img, .referti .pdf { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--bordo); }
+.referti .pdf { display: grid; place-items: center; font-weight: 700; color: #b3261e; font-size: .8rem; }
+.referti .nome { font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52vw; }
+.referti select { margin-top: 4px; padding: 5px 8px; font: inherit; font-size: .9rem; border: 1px solid var(--bordo); border-radius: 8px; background: #fff; }

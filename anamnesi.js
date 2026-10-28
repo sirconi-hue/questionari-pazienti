@@ -27,14 +27,72 @@
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }
-  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
-  async function cifra(chiaveJwk, risposte) {
+  function b64(buf) {  // a blocchi: un file da qualche MB supera i limiti degli argomenti di una funzione
+    const u = new Uint8Array(buf); let s = "";
+    for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  // ogni busta ha la sua chiave AES casuale, cifrata con la chiave pubblica dello studio
+  async function cifraDati(chiaveJwk, dati) {
     const pubblica = await crypto.subtle.importKey("jwk", chiaveJwk, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
     const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const c = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new TextEncoder().encode(JSON.stringify(risposte)));
+    const c = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, dati);
     const k = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubblica, await crypto.subtle.exportKey("raw", aes));
     return JSON.stringify({ v: 1, k: b64(k), iv: b64(iv), c: b64(c) });
+  }
+  const cifra = (chiaveJwk, risposte) => cifraDati(chiaveJwk, new TextEncoder().encode(JSON.stringify(risposte)));
+
+  // ------------------------------------------------------------------ referti (foto o PDF)
+  const MAX_REFERTI = 8, MAX_PDF = 4 * 1024 * 1024, LATO_MAX = 2400;
+  async function preparaReferto(file) {
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      if (file.size > MAX_PDF) throw new Error(`«${file.name}» è troppo grande (massimo 4 MB): fotografa le pagine.`);
+      return { blob: file, mime: "application/pdf", nome: file.name };
+    }
+    // foto: ridimensionata e ricompressa in JPEG (testo del referto leggibile, invio più rapido, niente dati GPS)
+    let immagine;
+    try { immagine = await createImageBitmap(file); } catch (e) { throw new Error(`«${file.name}»: formato non supportato, usa una foto o un PDF.`); }
+    const scala = Math.min(1, LATO_MAX / Math.max(immagine.width, immagine.height));
+    const tela = document.createElement("canvas");
+    tela.width = Math.round(immagine.width * scala); tela.height = Math.round(immagine.height * scala);
+    tela.getContext("2d").drawImage(immagine, 0, 0, tela.width, tela.height);
+    const blob = await new Promise(ok => tela.toBlob(ok, "image/jpeg", 0.85));
+    return { blob, mime: "image/jpeg", nome: (file.name || "referto").replace(/\.[^.]+$/, "") + ".jpg" };
+  }
+  function sezioneReferti(def) {
+    R.referti = [];
+    const nomiEsami = Object.fromEntries(def.esami);
+    const elenco = el("ul", { class: "referti" });
+    const avviso = el("p", { class: "errore", hidden: true });
+    const input = el("input", { type: "file", accept: "image/*,application/pdf", multiple: true, class: "nascosto", onchange: async ev => {
+      avviso.hidden = true;
+      for (const f of ev.target.files) {
+        if (R.referti.length >= MAX_REFERTI) { avviso.textContent = `Puoi caricare al massimo ${MAX_REFERTI} file.`; avviso.hidden = false; break; }
+        try { R.referti.push(Object.assign(await preparaReferto(f), { esame: (R.esami || [])[0] || "" })); }
+        catch (e) { avviso.textContent = e.message; avviso.hidden = false; }
+      }
+      ev.target.value = ""; aggiorna();
+    } });
+    function aggiorna() {
+      elenco.replaceChildren(...R.referti.map((r, i) => el("li", {},
+        r.mime.startsWith("image/") ? el("img", { src: URL.createObjectURL(r.blob), alt: "" }) : el("span", { class: "pdf", testo: "PDF" }),
+        el("div", {}, el("div", { class: "nome", testo: r.nome }),
+          el("select", { "aria-label": "Esame", onchange: ev => { r.esame = ev.target.value; } },
+            (R.esami || []).map(k => el("option", { value: k, selected: r.esame === k, testo: nomiEsami[k] })))),
+        el("button", { type: "button", class: "piccolo", "aria-label": "Togli", testo: "✕", onclick: () => { R.referti.splice(i, 1); aggiorna(); } }))));
+    }
+    const box = el("div", { class: "referti-box", hidden: true },
+      el("p", { class: "sottotitolo", testo: "Hai il referto? Fotografalo o caricalo (facoltativo)" }),
+      el("label", { class: "pulsante-file" }, input, "📷 Fotografa o scegli i referti"),
+      avviso, elenco,
+      testo("link_immagini", "Link per scaricare le immagini (es. WeTransfer, portale del centro), se ce l'hai", { tipo: "url", max: 500, extra: { inputmode: "url", placeholder: "https://…" } }));
+    box.aggiorna = () => {
+      box.hidden = !(R.esami || []).length;
+      R.referti.forEach(r => { if (!(R.esami || []).includes(r.esame)) r.esame = (R.esami || [])[0] || ""; });
+      aggiorna();
+    };
+    return box;
   }
 
   // ------------------------------------------------------------------ codice fiscale
@@ -126,6 +184,7 @@
       testo("squadra", "Squadra o società (se ne fai parte)", { max: 120 }));
     const gravidanza = el("div", { hidden: true }, domanda("Sei in gravidanza?", scelta("gravidanza", opz("gravidanza"), { riga: true })));
     const allergie = el("div", { hidden: true }, testo("allergie", "Quali allergie?", { aiuto: "farmaci, lattice, alimenti…" }));
+    const referti = sezioneReferti(def);
     return [
       { titolo: "Chi sei", corpo: [
         el("p", { class: "istruzioni", testo: "Rispondi con calma: servono pochi minuti e in visita avremo più tempo per te. Le domande senza risposta si possono saltare." }),
@@ -180,12 +239,15 @@
         if (!(R.allarme || []).length && !R.nessun_allarme) return ["allarme", "Rispondi all'ultima domanda (anche «Nessuno di questi»)."];
       } },
       { titolo: "Esami e cure già fatti", corpo: [
-        domanda("Hai già fatto esami per questo problema?", scelta("esami", opz("esami"), { multipla: true }),
-          testo("esami_note", "Quando e con quale esito, se lo sai", { righe: 2 })),
-        el("p", { class: "tenue", testo: "Porta in visita i referti e, se le hai, le immagini (CD o link)." }),
+        domanda("Hai già fatto esami per questo problema?", scelta("esami", opz("esami"), { multipla: true, poi: () => referti.aggiorna() }),
+          testo("esami_note", "Quando e con quale esito, se lo sai", { righe: 2 }), referti),
+        el("p", { class: "tenue", testo: "Porta comunque in visita i referti originali e, se le hai, le immagini (CD)." }),
         testo("trattamenti", "Cure già fatte (farmaci, fisioterapia, infiltrazioni…) e con quale risultato", { righe: 3, max: 2000 }),
         testo("obiettivo", "Che cosa ti aspetti dalla visita? (es. tornare a correre, dormire senza dolore)", { righe: 2 }),
-      ] },
+      ], controlla: () => {
+        R.link_immagini = (R.link_immagini || "").trim();
+        if (R.link_immagini && !/^https:\/\/[^\s]+\.[^\s]+$/.test(R.link_immagini)) return ["link_immagini", "Il link deve iniziare con https:// (copialo per intero dal messaggio ricevuto)."];
+      } },
       { titolo: "La tua salute", corpo: [
         domanda("Hai o hai avuto…", scelta("patologie", opz("patologie"), { multipla: true }), testo("patologie_altro", "Altre malattie")),
         testo("interventi", "Interventi chirurgici (quali e quando)", { righe: 2 }),
@@ -213,7 +275,8 @@
       sport: R.sport || "", squadra: R.squadra || "", livello: R.livello || "",
       dolore_riposo: n(R.dolore_riposo), dolore_attivita: n(R.dolore_attivita), dolore_peggiore: n(R.dolore_peggiore),
       dolore_notturno: R.dolore_notturno || "", andamento: R.andamento || "", sintomi: R.sintomi || [], allarme: R.allarme || [],
-      esami: R.esami || [], esami_note: R.esami_note || "", trattamenti: R.trattamenti || "", obiettivo: R.obiettivo || "",
+      esami: R.esami || [], esami_note: R.esami_note || "", link_immagini: R.esami && R.esami.length ? (R.link_immagini || "") : "",
+      gruppo: R.gruppo || "", referti: (R.esami || []).length ? R.referti.map((r, i) => ({ indice: i, nome: r.nome, mime: r.mime, esame: r.esame })) : [], trattamenti: R.trattamenti || "", obiettivo: R.obiettivo || "",
       patologie: R.patologie || [], patologie_altro: R.patologie_altro || "", interventi: R.interventi || "",
       farmaci: R.farmaci || "", anticoagulanti: R.anticoagulanti || "", allergie: R.allergie_presenti === "si" ? (R.allergie || "") : "",
       allergie_presenti: R.allergie_presenti || "", gravidanza: R.gravidanza || "", fumo: R.fumo || "",
@@ -253,6 +316,16 @@
       if (attuale < elenco.length - 1) return mostra(attuale + 1);
       avanti.disabled = true; avanti.textContent = "Invio…";
       try {
+        // prima i referti, uno alla volta, poi il questionario che li elenca
+        const daInviare = (R.esami || []).length ? R.referti : [];
+        if (daInviare.length && !R.gruppo) R.gruppo = b64(crypto.getRandomValues(new Uint8Array(24))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+        for (let i = 0; i < daInviare.length; i++) {
+          avanti.textContent = `Invio dei referti (${i + 1} di ${daInviare.length})…`;
+          const busta = await cifraDati(dati.chiave, new Uint8Array(await daInviare[i].blob.arrayBuffer()));
+          const ok = await rpc("anamnesi_allega", { p_codice: codice, p_gruppo: R.gruppo, p_indice: i, p_cifrato: busta });
+          if (ok !== "ok") throw new Error(ok);
+        }
+        avanti.textContent = "Invio…";
         const esito = await rpc("anamnesi_invia", { p_codice: codice, p_cifrato: await cifra(dati.chiave, risposte()) });
         if (esito === "ok") {
           document.getElementById("titolo").textContent = "Grazie!";
