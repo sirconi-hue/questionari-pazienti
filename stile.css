@@ -26,3 +26,43 @@ button:disabled { opacity: .6; }
 .fine { text-align: center; padding: 50px 10px; }
 .tenue { color: var(--tenue); font-size: .9rem; }
 @media (max-width: 480px) { .scala { grid-template-columns: repeat(6, 1fr); row-gap: 10px; } }
+/* Questionario anamnestico */
+.avanzamento { height: 6px; background: var(--fondo); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
+.avanzamento span { display: block; height: 100%; width: 0; background: var(--accento); transition: width .25s; }
+label.campo { display: block; margin: 14px 0; font-weight: 600; }
+label.campo small { display: block; font-weight: 400; }
+label.campo input, label.campo textarea, .zone-scelte select { display: block; width: 100%; margin-top: 4px; padding: 11px 12px; font: inherit;
+  font-weight: 400; border: 1px solid var(--bordo); border-radius: 10px; background: #fff; color: var(--testo); }
+label.campo input:focus, label.campo textarea:focus { outline: 2px solid var(--accento); outline-offset: -1px; }
+.scelte.in-riga { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.scelte.in-riga label { border-bottom: 0; }
+fieldset > label.campo:first-of-type { margin-top: 10px; }
+.scala.nrs label { cursor: pointer; }
+.scala.nrs input { accent-color: var(--c); }
+.nrs-0, .nrs-1, .nrs-2, .nrs-3 { --c: #3a9d5d; } .nrs-4, .nrs-5, .nrs-6 { --c: #d4901a; } .nrs-7, .nrs-8, .nrs-9, .nrs-10 { --c: #c0392b; }
+fieldset.allarme { border-color: #e7b9b5; }
+.consenso { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; font-weight: 600; }
+.consenso input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; accent-color: var(--accento); }
+.informativa { background: var(--fondo); border-radius: 10px; padding: 10px 14px; font-size: .9rem; margin-top: 16px; }
+.informativa summary { cursor: pointer; font-weight: 600; }
+.due { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pulsanti { display: flex; gap: 10px; }
+.pulsanti button[hidden] { display: none; }
+button.secondario { background: #fff; color: var(--accento); border: 1px solid var(--accento); }
+button.piccolo { width: auto; margin: 0; padding: 4px 10px; background: var(--fondo); color: var(--testo); }
+[hidden] { display: none !important; }
+/* mappa del corpo (vedi mappa_corpo.js) */
+.mappa-corpo { display: flex; justify-content: center; gap: 8px; margin: 6px 0 12px; }
+.mappa-vista { height: 330px; width: auto; max-width: 49%; }
+.mappa-contorno { fill: var(--fondo); stroke: var(--bordo); stroke-width: 3; }
+.mappa-zona { fill: #d5dde0; stroke: #fff; stroke-width: 2; transition: fill .15s; cursor: pointer; }
+.mappa-zona.selezionata { fill: var(--accento); }
+.mappa-zona.secondaria { fill: #7fbdb8; }
+.mappa-inattiva { opacity: .35; pointer-events: none; }
+.mappa-lato, .mappa-vista-nome { font: 600 44px -apple-system, sans-serif; fill: var(--tenue); }
+.zone-scelte { margin: 0; padding-left: 1.4em; }
+.zone-scelte li { margin: 6px 0; }
+.zone-scelte li > * { vertical-align: middle; }
+.zone-scelte select { display: inline-block; width: auto; margin: 0 6px; padding: 6px 8px; }
+/* la scala NRS resta su una riga anche sul telefono, come la scala originale */
+@media (max-width: 480px) { .scala.nrs { grid-template-columns: repeat(11, 1fr); gap: 0; } .scala.nrs input { width: 22px; height: 22px; } }
