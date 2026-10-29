@@ -62,6 +62,82 @@
     const blob = await new Promise(ok => tela.toBlob(ok, "image/jpeg", 0.85));
     return { blob, mime: "image/jpeg", nome: (file.name || "referto").replace(/\.[^.]+$/, "") + ".jpg" };
   }
+  // ------------------------------------------------------------------ racconto a voce (facoltativo)
+  // WAV PCM 16 kHz mono, ricampionato mentre si registra: è il formato che lo studio trascrive sul proprio computer.
+  // Cifrato come i referti, in una busta sola: al massimo def.voce.secondi (3 minuti).
+  const FREQ_VOCE = 16000, INDICE_VOCE = 9;
+  function wavVoce(campioni) {
+    const buf = new ArrayBuffer(44 + campioni.length * 2), v = new DataView(buf);
+    const scrivi = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    scrivi(0, "RIFF"); v.setUint32(4, 36 + campioni.length * 2, true); scrivi(8, "WAVE"); scrivi(12, "fmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, FREQ_VOCE, true);
+    v.setUint32(28, FREQ_VOCE * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); scrivi(36, "data");
+    v.setUint32(40, campioni.length * 2, true);
+    new Int16Array(buf, 44).set(campioni);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+  function sezioneVoce(def) {
+    const MAX = def.voce.secondi;
+    const tempo = el("span", { class: "voce-tempo", testo: "0:00" }), barra = el("span", { class: "voce-livello" }, el("span"));
+    const avviso = el("p", { class: "errore", hidden: true }), ascolta = el("div", { class: "voce-ascolta", hidden: true });
+    const registra = el("button", { type: "button", class: "pulsante-voce", testo: "🎙 Registra il tuo racconto" });
+    const ferma = el("button", { type: "button", class: "pulsante-voce in-corso", hidden: true, testo: "■ Ferma" });
+    const mmss = x => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
+    let reg = null;
+    const comandi = el("div", { class: "voce-comandi", hidden: true }, ferma, tempo, barra);
+    function mostraRegistrato() {
+      if (!R.voce) { ascolta.hidden = true; registra.hidden = false; return; }
+      const audio = el("audio", { controls: true, src: URL.createObjectURL(R.voce.blob) });
+      ascolta.replaceChildren(el("p", {}, el("strong", { testo: `✓ Racconto registrato (${mmss(R.voce.durata)})` })), audio,
+        el("button", { type: "button", class: "secondario", testo: "Cancella e registra di nuovo", onclick: () => { R.voce = null; mostraRegistrato(); } }));
+      ascolta.hidden = false; registra.hidden = true;
+    }
+    registra.addEventListener("click", async () => {
+      avviso.hidden = true;
+      let flusso;
+      try { flusso = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, noiseSuppression: true, autoGainControl: true } }); }
+      catch (e) { avviso.textContent = "Non riesco a usare il microfono: controlla di aver dato il permesso al browser, oppure scrivi il racconto qui sopra."; avviso.hidden = false; return; }
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const sorgente = ctx.createMediaStreamSource(flusso), proc = ctx.createScriptProcessor(4096, 1, 1);
+      const passo = ctx.sampleRate / FREQ_VOCE, pezzi = [];
+      let i = 0, k = 0, somma = 0, n = 0;
+      const intero = x => Math.max(-32768, Math.min(32767, Math.round(x * 32767)));
+      proc.onaudioprocess = ev => {
+        const x = ev.inputBuffer.getChannelData(0), out = new Int16Array(Math.ceil(x.length / passo) + 2); let m = 0, q = 0;
+        for (let j = 0; j < x.length; j++, i++) {
+          const kk = Math.floor(i / passo);
+          if (kk !== k && n) { out[m++] = intero(somma / n); somma = 0; n = 0; k = kk; }
+          somma += x[j]; n++; if (!(j & 7)) q += x[j] * x[j];
+        }
+        pezzi.push(out.subarray(0, m));
+        barra.firstChild.style.width = Math.min(100, Math.sqrt(q / (x.length / 8)) * 400) + "%";
+        tempo.textContent = `${mmss(i / ctx.sampleRate)} di ${mmss(MAX)}`;
+        if (i / ctx.sampleRate >= MAX) chiudi();
+      };
+      sorgente.connect(proc); proc.connect(ctx.destination);
+      reg = { ctx, flusso, proc, pezzi, secondi: () => i / ctx.sampleRate };
+      registra.hidden = true; ferma.hidden = false; comandi.hidden = false; tempo.textContent = `0:00 di ${mmss(MAX)}`;
+    });
+    function chiudi() {
+      if (!reg) return;
+      const { ctx, flusso, proc, pezzi, secondi } = reg; reg = null;
+      proc.disconnect(); flusso.getTracks().forEach(t => t.stop()); ctx.close();
+      ferma.hidden = true; comandi.hidden = true; barra.firstChild.style.width = "0";
+      const tot = pezzi.reduce((a, p) => a + p.length, 0), campioni = new Int16Array(tot);
+      let o = 0; for (const p of pezzi) { campioni.set(p, o); o += p.length; }
+      if (secondi() < 3) { avviso.textContent = "Registrazione troppo breve: riprova."; avviso.hidden = false; registra.hidden = false; return; }
+      R.voce = { blob: wavVoce(campioni.subarray(0, MAX * FREQ_VOCE)), durata: Math.min(MAX, Math.round(secondi())) };
+      mostraRegistrato();
+      ascolta.dispatchEvent(new Event("change", { bubbles: true }));   // via l'eventuale avviso «racconta il motivo»
+    }
+    ferma.addEventListener("click", chiudi);
+    return el("div", { class: "voce-box" },
+      el("p", { class: "voce-titolo" }, el("strong", { testo: "Preferisci raccontarlo a voce?" }),
+        ` Facoltativo, fino a ${Math.round(MAX / 60)} minuti: cosa senti, da quando, come è iniziato, cosa hai già fatto.`),
+      registra, comandi, ascolta, avviso,
+      el("p", { class: "tenue", testo: "La registrazione viene cifrata sul tuo telefono e può ascoltarla solo lo studio, che la trascrive sui propri computer." }));
+  }
+
   function sezioneReferti(def) {
     R.referti = [];
     const nomiEsami = Object.fromEntries(def.esami);
@@ -364,6 +440,7 @@
       chiSei(dati, [], () => { gravidanza.hidden = !femmina(R.cf); }),
       { titolo: "Il problema", corpo: [
         testo("motivo", "Perché vieni in visita? Raccontalo con parole tue", { righe: 3, max: 2000 }),
+        def.voce ? sezioneVoce(def) : null,
         sezioneMappa(def),
         domanda("Da quanto tempo?", scelta("durata", opz("durate")),
           testo("esordio_data", "Se ricordi il giorno in cui è iniziato", { tipo: "date", extra: { max: new Date().toISOString().slice(0, 10) } })),
@@ -373,7 +450,7 @@
         domanda("Dove è successo?", scelta("contesto", opz("contesti"), { poi: () => { sport.hidden = R.contesto !== "sport"; } })),
         sport,
       ], controlla: () => {
-        if (!(R.motivo || "").trim() && !R.zone.length) return ["motivo", "Racconta il motivo della visita o indica sulla figura dove senti dolore."];
+        if (!(R.motivo || "").trim() && !R.zone.length && !R.voce) return ["motivo", "Racconta il motivo della visita (scrivendo o a voce) o indica sulla figura dove senti dolore."];
       } },
       { titolo: "Il dolore", corpo: [
         nrs("dolore_riposo", "Quanto è forte il dolore a riposo?"),
@@ -519,6 +596,7 @@
       immagini: (R.esami || []).length ? (R.immagini || "") : "",
       dicom: R.dicom && R.dicom.completo ? { gruppo: R.dicom.gruppo, k: b64(R.dicom.chiavi.k), m: b64(R.dicom.chiavi.m), nonce: b64(R.dicom.chiavi.nonce),
         byte: R.dicom.analisi.byte, pezzo: PEZZO, pezzi: R.dicom.pezzi, file: R.dicom.analisi.file, esame: R.dicom.esame } : null,
+      voce: R.voce && R.voce.inviato ? { indice: INDICE_VOCE, durata: R.voce.durata } : null,
       gruppo: R.gruppo || "", referti: (R.esami || []).length ? R.referti.map((r, i) => ({ indice: i, nome: r.nome, mime: r.mime, esame: r.esame })) : [], trattamenti: R.trattamenti || "", obiettivo: R.obiettivo || "",
       patologie: R.patologie || [], patologie_altro: R.patologie_altro || "", interventi: R.interventi || "",
       farmaci: R.farmaci || "", anticoagulanti: R.anticoagulanti || "", allergie: R.allergie_presenti === "si" ? (R.allergie || "") : "",
@@ -561,12 +639,20 @@
       try {
         // prima i referti, uno alla volta, poi il questionario che li elenca
         const daInviare = IDONEITA ? (R.ecg_fatto === "si" ? R.referti : []) : ((R.esami || []).length ? R.referti : []);
-        if (daInviare.length && !R.gruppo) R.gruppo = b64(crypto.getRandomValues(new Uint8Array(24))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+        const voce = !IDONEITA && R.voce ? R.voce : null;
+        if ((daInviare.length || voce) && !R.gruppo) R.gruppo = b64(crypto.getRandomValues(new Uint8Array(24))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
         for (let i = 0; i < daInviare.length; i++) {
           avanti.textContent = `Invio dei referti (${i + 1} di ${daInviare.length})…`;
           const busta = await cifraDati(dati.chiave, new Uint8Array(await daInviare[i].blob.arrayBuffer()));
           const ok = await rpc("anamnesi_allega", { p_codice: codice, p_gruppo: R.gruppo, p_indice: i, p_cifrato: busta });
           if (ok !== "ok") throw new Error(ok);
+        }
+        if (voce && !voce.inviato) {
+          avanti.textContent = "Invio del racconto a voce…";
+          const ok = await rpc("anamnesi_allega", { p_codice: codice, p_gruppo: R.gruppo, p_indice: INDICE_VOCE,
+                                                     p_cifrato: await cifraDati(dati.chiave, new Uint8Array(await voce.blob.arrayBuffer())) });
+          if (ok !== "ok") throw new Error(ok);
+          voce.inviato = true;
         }
         if (!IDONEITA && (R.esami || []).length && R.immagini === "carica" && R.dicom.analisi && !R.dicom.completo) {
           stato.hidden = false;

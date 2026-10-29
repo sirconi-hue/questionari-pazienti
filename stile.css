@@ -79,3 +79,14 @@ button.piccolo { width: auto; margin: 0; padding: 4px 10px; background: var(--fo
 .immagini { margin-top: 12px; }
 .carica-immagini .pulsante-file { margin: 8px 0; }
 .stato-invio { background: var(--fondo); border-radius: 10px; padding: 12px 14px; font-weight: 600; color: var(--accento); }
+
+/* racconto a voce */
+.voce-box { margin: 4px 0 18px; padding: 12px; border: 1px solid var(--fondo); border-radius: 12px; }
+.voce-titolo { margin: 0 0 10px; }
+.pulsante-voce { display: block; width: 100%; padding: 13px; border: 1.5px solid var(--accento); border-radius: 12px; background: #fff; color: var(--accento); font-weight: 600; font-size: 1rem; cursor: pointer; }
+.pulsante-voce.in-corso { background: #b42318; border-color: #b42318; color: #fff; width: auto; display: inline-block; padding: 10px 18px; }
+.voce-comandi { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
+.voce-tempo { font-variant-numeric: tabular-nums; }
+.voce-livello { flex: 1; height: 8px; border-radius: 4px; background: var(--fondo); overflow: hidden; }
+.voce-livello span { display: block; height: 100%; width: 0; background: var(--accento); }
+.voce-ascolta audio { width: 100%; margin: 6px 0; }
